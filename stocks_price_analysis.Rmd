@@ -1,0 +1,344 @@
+---
+title: "Analysis on Amazon Stock Price"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-04-22"
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Abstract
+
+Amazon is one of the most influential companies in the world.
+The goal is to do analysis on the Amazon stock price, and the analysis of the stock can help us summary the past, and forecast the future.
+
+# Extract data
+
+## Draw the Amazon stock data from 2023-01-01 to 2023-12-31 as train set
+
+```{r}
+library(quantmod)
+getSymbols("AMZN",src='yahoo',return.class='ts', from = '2023-01-01', to = '2023-12-31')
+train <- AMZN[,4]
+length(train)
+```
+
+## Draw the Amazon stock data from 2024-01-01 to 2024-01-31 as test set
+
+```{r}
+getSymbols("AMZN",src='yahoo',return.class='ts', from = '2024-01-01', to = '2024-01-31')
+test <- AMZN[,4]
+length(test)
+```
+
+# EDA
+
+we can first observe the time series plot of the data.
+And we can see that the scale($10^2$) is large, and there is trend on the long term.
+
+```{r}
+ts.plot(train)
+```
+
+So we can reduce the scale by log transformation and fit a trend model for the data.
+
+```{r}
+train_set <- log(train)
+test_set <- log(test)
+tfit <- time(train_set)
+```
+
+```{r}
+ts.plot(train_set)
+```
+
+# Remove the Deterministic trend
+
+## linear trend model
+
+```{r}
+mlr.lin <- lm(train_set ~ tfit)
+
+summary(mlr.lin)
+```
+
+## quadratic trend model
+
+```{r}
+tsqfit <- tfit^2/factorial(2) 
+mlr.quad <- lm(train_set ~ tfit + tsqfit) 
+
+summary(mlr.quad)
+```
+
+## cubic trend model
+
+```{r}
+tcubfit <- tfit^3/factorial(3)
+mlr.cub <- lm(train_set ~ tfit + tsqfit + tcubfit) 
+
+summary(mlr.cub)
+```
+
+## quartic trend model
+
+```{r}
+tquarfit <- tfit^4/factorial(4)
+mlr.quar <- lm(train_set ~ tfit + tsqfit + tcubfit + tquarfit) 
+
+summary(mlr.quar)
+```
+
+## trend model selection
+
+```{r}
+par(mfrow=c(2,2))
+plin=cbind(train_set,mlr.lin$fitted) 
+ts.plot(plin,main="xfit and fit.linear") 
+pquad=cbind(train_set,mlr.quad$fitted) 
+ts.plot(pquad,main="xfit and fit.quadratic") 
+pcub=cbind(train_set,mlr.cub$fitted) 
+ts.plot(pcub,main="xfit and fitt.cubic")
+pquar=cbind(train_set,mlr.quar$fitted) 
+ts.plot(pquar,main="xfit and fitt.quartic")
+```
+
+### in-sample metric
+
+we can compare the trend models by AIC
+
+```{r}
+nfit <- length(train_set)
+```
+
+```{r}
+AIC.lin <-  AIC(mlr.lin)/nfit
+AIC.quad <- AIC(mlr.quad)/nfit 
+AIC.cub <- AIC(mlr.cub)/nfit
+AIC.quar <- AIC(mlr.quar)/nfit 
+data.frame(
+  model = c("lin", "quad", "cub", "quar"),
+  AIC = c(AIC.lin, AIC.quad, AIC.cub, AIC.quar)
+)
+```
+
+By AIC, we can see that quartic trend model has the best effect on the combination of fitting and complexity.
+
+### out of sample metric
+
+we can calculate the MAPE of each model.
+
+```{r}
+new <- data.frame(tfit=c(378:397))
+pfore.lin <- predict(mlr.lin,new,se.fit = TRUE) 
+efore.lin <- test_set - pfore.lin$fit
+```
+
+```{r}
+tfit <- c(378:397)
+tsqfit <- tfit^2/factorial(2) 
+mat <- matrix(c(tfit,tsqfit),nrow=20,ncol=2,dimnames = list(c(),c("tfit","tsqfit"))) 
+newnq <- data.frame(mat) 
+pfore.quad <- predict(mlr.quad,newnq,se.fit = TRUE) 
+efore.quad <- test_set - pfore.quad$fit
+```
+
+```{r}
+tfit <- c(378:397)
+tcubfit <- tfit^3/factorial(3)
+mat <- matrix(c(tfit,tsqfit,tcubfit),nrow=20,ncol=3, dimnames = list(c(),c("tfit","tsqfit","tcubfit")))
+newnc <- data.frame(mat) 
+pfore.cub <- predict(mlr.cub,newnc,se.fit = TRUE) 
+efore.cub <- test_set - pfore.cub$fit
+```
+
+```{r}
+tfit <- c(378:397)
+tquarfit <- tfit^4/factorial(4)
+mat <- matrix(c(tfit,tsqfit,tcubfit,tquarfit),nrow=20,ncol=4, 
+              dimnames = list(c(),c("tfit","tsqfit","tcubfit","tquarfit")))
+newnc <- data.frame(mat) 
+pfore.quar <- predict(mlr.quar,newnc,se.fit = TRUE) 
+efore.quar <- test_set - pfore.quar$fit
+```
+
+```{r}
+mape.lin <- 100*(mean(abs((efore.lin)/test_set)))
+mape.quad <- 100*(mean(abs((efore.quad)/test_set)))
+mape.cub <- 100*(mean(abs((efore.cub)/test_set)))
+mape.quar <- 100*(mean(abs((efore.quar)/test_set)))
+```
+
+```{r}
+data.frame(
+  model = c("lin", "quad", "cub", "quar"),
+  MAPE = c(mape.lin, mape.quad, mape.cub, mape.quar)
+)
+```
+
+We can see that the quadratic model has the smallest MAPE, which means that it has the best predictive performance.
+Although the quartic model do well in AIC, but it is a overfitted model, it has too large MAPE.\
+Considering the AIC and MAPE, I decide to use quadratic model to remove the deterministic trend for further analyze.
+
+# Stochastic trend
+
+After removing the deterministic trend, we need to explore the stochastic trend of the data to help us better forecast.
+
+```{r}
+detrend <- mlr.quad$resid
+detrend_test <- efore.quad
+```
+
+let's see the time series plot of the data we need to analyze now.
+
+```{r}
+ts.plot(detrend)
+```
+
+Well, the mean is around 0, and the values volatile between around -0.15 and 0.15.
+
+## Sationarity check   
+
+And let's check whether the data is statioanary or not.
+
+```{r}
+library(fUnitRoots)
+adfTest(detrend, lags=10, type = "c")
+```
+
+From the Augmented Dickey-Fuller Test, we can know its p-value is significantly large, so we need to difference the data to make it statioanry.
+
+```{r, warning=FALSE}
+diff <- diff(detrend)
+adfTest(diff, lags=10, type = "c")
+```
+
+After differencing, we can see that the data is stationary now.
+
+```{r}
+ts.plot(diff)
+```
+
+```{r}
+acf(diff, lag.max = 50)
+```
+
+```{r}
+pacf(diff, lag.max = 50)
+```
+
+```{r}
+Box.test(diff, lag=30, fitdf=1, type = c("Ljung-Box"))
+```
+
+From the acf and pacf plot and the result of Box-Ljung test, we can know that the mean model is adequate.\
+And let's check whether there is some ARCH effect.
+
+## Heteroscedasticity check
+
+```{r}
+acf((diff)^2, lag.max = 50)
+```
+
+```{r}
+pacf((diff)^2, lag.max = 50)
+```
+
+```{r}
+library(TSA)
+McLeod.Li.test(y = diff)
+```
+
+From the acf and pacf plot of the square of the residuals, we can see there is heteroscedasticity, and we need to fit some ARCH model to improve it.
+
+# Heteroscedastic Model
+
+## ARCH(1)
+
+we can first try ARCH(1) model.
+
+```{r, warning=FALSE}
+library(fGarch)
+arch_1 <- garchFit(~garch(1,0), data = diff, trace=FALSE, 
+                   cond.dist=c("norm"), include.mean=FALSE)
+
+summary(arch_1)  
+```
+
+Let's check the residuals of the model.
+
+```{r}
+arch_1.res <- residuals(arch_1, standardize=TRUE)
+ts.plot(arch_1.res)
+```
+
+```{r}
+acf((arch_1.res)^2, lag.max = 50)
+```
+
+```{r}
+pacf((arch_1.res)^2, lag.max = 50)
+```
+
+```{r}
+McLeod.Li.test(y = arch_1.res, gof.lag = 200)
+```
+
+The acf and pacf plot shows there is no further ARCH effect, and McLeod-Li test shows that the model is adequate.  
+
+
+# Final Model
+
+According to the analyze above, we can get a model with the following expression:\
+$$X_t = 4.477 + 3.272\times10^{-3}t - 4.8135\times10^{-6}t^2+Y_t$$\
+$$Y_t - Y_{t-1} = e_t$$\
+$$e_t = \sigma_t\epsilon_t$$\
+$$\sigma_t^2 = 0.00037+0.1231e_{t-1}^2$$  
+where $\epsilon_t$ is a white noise.  
+
+# Forecast
+
+We have already forecasted the deterministic trend, so what we need to do now is to forecast the stochastic trend and combine them.
+
+## Forecast the variance model
+
+```{r}
+sto_pred <- predict(arch_1, n.ahead=20, plot=TRUE, conf=.95)
+```
+
+## Combine the deterministic trend model and stochastic trend model
+
+Let's calculate the MAPE of the whole model(deterministic trend + stochastic trend model)
+
+```{r}
+mape_log <- 100*(mean(abs((test_set - (sto_pred$meanForecast + pfore.quad$fit))/test_set)))
+cat("The MAPE of the log transformation process is:",mape_log)
+```
+
+```{r}
+mape <- 100*(mean(abs((test - exp(sto_pred$meanForecast + pfore.quad$fit))/test)))
+cat("The MAPE of the whole model is:",mape)
+```
+
+## Plot of the Forecast result
+
+```{r}
+ppred <- cbind(test_set, sto_pred$meanForecast + pfore.quad$fit) 
+ts.plot(ppred,main="test_set vs pred", col = c("black", "red"), lty = c(1, 2)) 
+```
+
+# Conclusion
+
+For this times series data, my goal is to fit models to make the residuals to be white noise, where the models are considered to be adequate to capture all the feature of the data, So that I may be able to apply it to the practice in the real world.  
+However, I still have something confused(limitation):  
+(1) I don't know how to predict the values for the differenced data, so I just skip it.  
+(2) Maybe I can include other factors to fit the model, so that I can using ARMAX to further analysis.\
+(3) The prediction result may not good, since the test set presents a upward trend, and the prediction values presents almost just a slightly downward sloping line, so I need to further improve the model and study more knowledges to know more patterns or models.
+
+
